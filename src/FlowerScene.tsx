@@ -21,7 +21,7 @@ function makeMembraneMaps() {
       const u = x / size
       const v = y / size
       const offset = (y * size + x) * 4
-      const film = 0.5 + 0.5 * Math.sin(v * 18 + Math.sin(u * 9) * 2.8 + u * 5)
+      const film = 0.5 + 0.5 * Math.sin(v * 13 + Math.sin(u * 8) * 2.4 + u * 7)
       thickness[offset] = thickness[offset + 1] = thickness[offset + 2] = Math.round(film * 255)
       thickness[offset + 3] = 255
       const ridge = Math.cos(u * Math.PI * 62 + Math.sin(v * 9) * 1.6)
@@ -43,6 +43,34 @@ function makeMembraneMaps() {
   return { filmMap, normalMap }
 }
 
+function enhanceInterference(material: THREE.MeshPhysicalMaterial) {
+  // Artistic thin-film accent: modulate reflected light only, never emissive light,
+  // alpha or geometry. Both film thickness and viewing angle move the spectrum.
+  material.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+      #ifdef USE_IRIDESCENCE
+        float filmView = abs(dot(nonPerturbedNormal, geometryViewDir));
+        float filmPhase = material.iridescenceThickness * 0.008 + (1.0 - filmView) * 7.0;
+        vec3 filmSpectrum = pow(0.52 + 0.48 * cos(filmPhase + vec3(0.0, 2.094395, 4.18879)), vec3(1.35));
+        filmSpectrum = mix(filmSpectrum, vec3(0.04, 1.0, 1.0), 0.28 * (0.5 + 0.5 * sin(filmPhase + 1.2)));
+        float filmBand = smoothstep(0.35, 0.95, 0.5 + 0.5 * sin(filmPhase * 1.15));
+        vec3 filmAccent = mix(vec3(0.8), 0.3 + filmSpectrum * 5.0, 0.65 + filmBand * 0.3);
+        reflectedLight.indirectSpecular *= filmAccent;
+        reflectedLight.directSpecular *= filmAccent;
+        #ifdef USE_ENVMAP
+          // A broad, softly filtered studio reflection creates luminous ribbons,
+          // independent of the fine vein normal map. No emission or alpha change.
+          vec3 filmStudio = getIBLRadiance(geometryViewDir, nonPerturbedNormal, 0.38);
+          reflectedLight.indirectSpecular += filmStudio * filmSpectrum * filmBand * 1.05;
+        #endif
+      #endif`,
+    )
+  }
+  material.customProgramCacheKey = () => 'membrane-interference-v2'
+}
+
 function makeEnvironment(renderer: THREE.WebGLRenderer, economical: boolean) {
   const studio = new THREE.Scene()
   studio.background = new THREE.Color(0x030407)
@@ -55,12 +83,14 @@ function makeEnvironment(renderer: THREE.WebGLRenderer, economical: boolean) {
     panels.push(mesh)
   }
   // Large luminous surfaces form a soft studio reflection, independent of the black background.
-  panel('#c3ebff', 2, [1.5, 6], [-4, 2, 4])
+  panel('#d7f3ff', 3, [2.8, 6], [-4, 2, 4])
   panel('#40ffe9', 12, [1, 6], [4, 0, 2])
   panel('#9c72ff', 3, [1.3, 5], [-3, -1, -4])
   panel('#ff86ce', 9, [1, 5], [4, 2, -3])
   panel('#56efff', 8, [4, 0.5], [0, 1, 5])
   panel('#805aff', 6, [0.55, 6], [-2, 0, 5])
+  panel('#ffc373', 5, [0.35, 4], [1.7, 0.5, 5])
+  panel('#88ffd0', 6, [0.45, 4], [-0.9, -0.5, 5])
   panel('#bce4ff', 2, [4, 0.7], [0, 5, 1])
   panel('#4c8fff', 2, [3, 0.5], [0, -4, 2])
   const pmrem = new THREE.PMREMGenerator(renderer)
@@ -91,6 +121,8 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
     let disposed = false
     let renderer: THREE.WebGLRenderer
     let environment: THREE.WebGLRenderTarget | undefined
+    let haloCanvas: HTMLCanvasElement | undefined
+    let haloContext: CanvasRenderingContext2D | null = null
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     const textures = new Set<THREE.Texture>()
@@ -125,6 +157,7 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
     function fail(message: string) {
       if (disposed) return
       loaded = false
+      if (haloCanvas) haloContext?.clearRect(0, 0, haloCanvas.width, haloCanvas.height)
       cancelAnimationFrame(frame)
       frame = 0
       setError(message)
@@ -145,6 +178,13 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
       renderer.domElement.tabIndex = 0
       renderer.domElement.className = 'flower-canvas'
       host.appendChild(renderer.domElement)
+      // Reuse the actual rendered colors and silhouette at low resolution.
+      // This avoids another 3D render or expensive full-resolution bloom passes.
+      haloCanvas = document.createElement('canvas')
+      haloCanvas.className = 'flower-halo'
+      haloCanvas.setAttribute('aria-hidden', 'true')
+      haloContext = haloCanvas.getContext('2d', { alpha: true })
+      if (haloContext) host.insertBefore(haloCanvas, renderer.domElement)
       environment = makeEnvironment(renderer, economical)
       scene.environment = environment.texture
       scene.environmentIntensity = 0.85
@@ -158,7 +198,7 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
     } catch {
       fail('A visualização 3D não pôde ser iniciada. Verifique se o WebGL está habilitado no navegador e tente novamente.')
       renderer!?.dispose()
-      return () => { disposed = true; renderer!?.domElement.remove() }
+      return () => { disposed = true; renderer!?.domElement.remove(); haloCanvas?.remove() }
     }
 
     function schedule() {
@@ -179,6 +219,10 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
       floatGroup.rotation.set(0.045 + rotation.x + Math.sin(elapsed * 0.43) * 0.012, -0.075 + rotation.y + Math.sin(elapsed * 0.28) * 0.025, -0.035)
       floatGroup.position.y = Math.sin(elapsed * 0.7) * 0.025
       renderer.render(scene, camera)
+      if (haloContext && haloCanvas) {
+        haloContext.clearRect(0, 0, haloCanvas.width, haloCanvas.height)
+        haloContext.drawImage(renderer.domElement, 0, 0, haloCanvas.width, haloCanvas.height)
+      }
       host.dataset.rotation = `${rotation.x.toFixed(3)},${rotation.y.toFixed(3)}`
       host.dataset.motion = moving ? 'running' : 'paused'
       host.dataset.frames = String(Number(host.dataset.frames ?? 0) + 1)
@@ -189,6 +233,11 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
       const height = host.clientHeight
       if (!width || !height) return
       renderer.setSize(width, height)
+      if (haloCanvas) {
+        const haloScale = Math.min(0.5, (economical ? 256 : 512) / Math.max(width, height))
+        haloCanvas.width = Math.max(1, Math.round(width * haloScale))
+        haloCanvas.height = Math.max(1, Math.round(height * haloScale))
+      }
       camera.aspect = width / height
       if (modelBounds) {
         const vFov = THREE.MathUtils.degToRad(camera.fov)
@@ -266,24 +315,25 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
           object.material = material
           if (object.name === 'Petalas_Iridescentes' || object.name === 'Folhas_Translucidas') {
             material.iridescence = 0.92
-            material.iridescenceIOR = 1.72
-            material.iridescenceThicknessRange = [110, 620]
+            material.iridescenceIOR = 1.9
+            material.iridescenceThicknessRange = [160, 920]
             material.iridescenceThicknessMap = membraneMaps.filmMap
             material.normalMap = membraneMaps.normalMap
-            material.normalScale.set(0.44, 0.24)
+            material.normalScale.set(0.28, 0.18)
             material.color.setRGB(0.22, 0.29, 0.38)
-            material.metalness = 0.1
+            material.metalness = 0.18
             material.specularIntensity = 1.8
             material.transmission = 0.91
             material.thickness = 0.035
             material.roughness = 0.16
-            material.clearcoat = 0.6
+            material.clearcoat = 0.28
             material.clearcoatRoughness = 0.13
             material.envMapIntensity = 1.8
             material.transparent = true
             material.opacity = 0.72
             material.depthWrite = false
             material.forceSinglePass = true
+            enhanceInterference(material)
           } else if (object.name === 'Nervuras_Finas') {
             material.color.set('#a9c7e0')
             material.metalness = 0.16
@@ -416,6 +466,10 @@ export default function FlowerScene({ paused, veins, selected, reset, onReady }:
       disposeResources()
       environment?.dispose()
       renderer.dispose()
+      if (haloCanvas) {
+        haloCanvas.width = haloCanvas.height = 1
+        haloCanvas.remove()
+      }
       canvas.remove()
     }
   }, [retry])

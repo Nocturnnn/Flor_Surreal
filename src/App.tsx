@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import FlowerScene from './FlowerScene'
 import type { SceneInfo } from './FlowerScene'
 
@@ -55,7 +55,15 @@ export default function App() {
   const [veins,setVeins]=useState(true)
   const [reset,setReset]=useState(0)
   const [info,setInfo]=useState<SceneInfo|null>(null)
+  const [notesOpen,setNotesOpen]=useState(false)
   const onReady=useCallback((value:SceneInfo)=>setInfo(value),[])
+  useEffect(() => {
+    const closeNotes = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNotesOpen(false)
+    }
+    window.addEventListener('keydown', closeNotes)
+    return () => window.removeEventListener('keydown', closeNotes)
+  }, [])
   return <main className="editorial-plate" aria-labelledby="plate-title">
     <a className="skip-link" href="#specimen-controls">Ir para os controles</a>
     <header className="plate-masthead"><span className="archive-id">HERBARIUM / FUTURA</span><h1 id="plate-title">TRANSPARÊNCIA</h1><span className="plate-id">PRANCHA 001 — ESTUDO DIGITAL</span></header>
@@ -76,13 +84,13 @@ export default function App() {
 
     <footer className="plate-colophon">
       <div className="colophon-ruler" aria-hidden="true">{Array.from({length:30},(_,i)=><span key={i}>{String(i*10).padStart(3,'0')}</span>)}</div>
-      <div className="editorial-columns">
+      <div id="plate-notes" className="editorial-columns" hidden={!notesOpen} role="region" aria-label="Notas da prancha">
         <section><h2>01 / TRANSPARÊNCIA</h2><p>Um herbário do que ainda não existe. Este espécime propõe outra natureza: delicada, sintética, atravessada pela luz.</p><p>Estudo artístico de botânica especulativa. Não representa uma espécie real.</p><span className="column-code">ARQUIVO VIRTUAL — VOL. 01</span></section>
         <section><h2>02 / MORFOLOGIA</h2><p>Pétalas iridescentes. Folhas translúcidas. Caule e sépalas. Estames e pistilo. Anteras peroladas. Nervuras finas.</p><dl className="colophon-data"><div><dt>COMPONENTES</dt><dd>{info?.parts.length.toString().padStart(2,'0')??'—'}</dd></div><div><dt>TRIÂNGULOS</dt><dd>{info?.triangles.toLocaleString('pt-BR')??'—'}</dd></div></dl></section>
         <section><h2>03 / COMPORTAMENTO ÓPTICO</h2><p>Uma película fina refrata e reflete o ambiente. Ciano, azul, violeta e rosa emergem conforme a incidência da luz e o ângulo de observação.</p><p>Transmissão · iridescência · clearcoat<br />Refração da membrana / IOR 1.36</p><span className="column-code">λ / ESPECTRO VISÍVEL</span></section>
         <section><h2>04 / PROTOCOLO DE OBSERVAÇÃO</h2><p>Arraste o espécime para inspecionar. Mova o cursor para alterar a perspectiva. Uma forma imóvel também revela outros estados da luz.</p><p>Teclado: setas para girar.<br />Home para restaurar a vista.</p><a className="specimen-download" href="/models/Flor_Translucida.glb" download>ARQUIVO DO ESPÉCIME / GLB <span>↗</span></a></section>
       </div>
-      <div className="plate-bottom"><span className="live-status" role="status"><i />{info?'ESPÉCIME EM OBSERVAÇÃO':'PREPARANDO ESPÉCIME'}</span><div id="specimen-controls" className="specimen-controls" role="group" aria-label="Controles do espécime"><button aria-pressed={paused} onClick={()=>setPaused(value=>!value)}><ControlIcon kind={paused?'play':'pause'} />{paused?'Retomar movimento':'Pausar movimento'}</button><button aria-pressed={veins} onClick={()=>setVeins(value=>!value)}><ControlIcon kind="veins" />Exibir nervuras<span className={`control-state ${veins?'active':''}`} aria-hidden="true" /></button><button onClick={()=>setReset(value=>value+1)}><ControlIcon kind="reset" />Restaurar vista</button></div><span className="edition-stamp" aria-hidden="true">T / 001 &nbsp; © 2026</span></div>
+      <div className="plate-bottom"><span className="live-status" role="status"><i />{info?'ESPÉCIME EM OBSERVAÇÃO':'PREPARANDO ESPÉCIME'}</span><div id="specimen-controls" className="specimen-controls" role="group" aria-label="Controles do espécime"><button aria-pressed={paused} onClick={()=>setPaused(value=>!value)}><ControlIcon kind={paused?'play':'pause'} />{paused?'Retomar movimento':'Pausar movimento'}</button><button aria-pressed={veins} onClick={()=>setVeins(value=>!value)}><ControlIcon kind="veins" />Exibir nervuras<span className={`control-state ${veins?'active':''}`} aria-hidden="true" /></button><button onClick={()=>setReset(value=>value+1)}><ControlIcon kind="reset" />Restaurar vista</button></div><button className="notes-toggle" aria-expanded={notesOpen} aria-controls="plate-notes" onClick={()=>setNotesOpen(value=>!value)}>{notesOpen?'Fechar notas':'Notas da prancha'} <span aria-hidden="true">{notesOpen?'−':'+'}</span></button></div>
     </footer>
   </main>
 }
